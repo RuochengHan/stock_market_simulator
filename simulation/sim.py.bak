@@ -1,0 +1,123 @@
+import numpy as np
+from scipy.stats import chi2
+import sys
+
+fstock = open('ai_stock.txt', 'w+')
+fmoney = open('ai_money.txt', 'w+')
+fwealth = open('ai_wealth.txt', 'w+')
+fprice = open(sys.argv[1], 'w+')
+
+# initiate
+price = 1
+price_df = 20
+num_stock = 2000
+all_money = 2000
+num_ai = 100
+time = 20000
+forget_ratio = 0.1
+large = 99999
+
+ai_stock = np.random.multinomial(num_stock, np.ones(num_ai)/num_ai, size=1)[0]
+ai_money = np.random.dirichlet(np.ones(num_ai), size=1)[0] * all_money
+ai_wealth = ai_stock * price + ai_money
+ai_pred = chi2.rvs(price_df, size=num_ai) / price_df * price #lognormal
+ai_sell_price = [large] * num_ai
+ai_sell_num = [0] * num_ai
+ai_rich = [0] * num_ai
+
+exchange = 0
+t = 0
+while (t < time):
+    print(str(price) + '\t' + str(sum(ai_money)) + '\t' + str(t))
+    # print to files
+    fprice.write(str(price) + '\n')
+    for i in range(num_ai):
+        fstock.write(str(ai_stock[i]) + ' ')
+        fmoney.write(str(ai_money[i]) + ' ')
+        fwealth.write(str(ai_wealth[i]) + ' ')
+    fstock.write(str(ai_stock[i]) + '\n')
+    fmoney.write(str(ai_money[i]) + '\n')
+    fwealth.write(str(ai_wealth[i]) + '\n')
+    #print(ai_pred)
+
+    price_last = price
+
+    #print(ai_pred)
+    i = 0
+    while (i < num_ai): # sell
+        if ai_stock[i] > 0 and ai_pred[i] < price:
+            delta = np.random.normal(0, 0.02, 1)[0]
+            ai_sell_price[i] = price + delta # this will be a variable in the future
+            ai_sell_num[i] = np.random.randint(ai_stock[i] + 1, size=1)[0]
+        i = i + 1
+    min_sell_price = min(ai_sell_price)
+    i = np.argmin(ai_sell_price)
+    #print(min_sell_price)
+    #print(i)
+    #print('ok1')
+    random_list = np.arange(num_ai)
+    np.random.shuffle(random_list)
+    for j in random_list: # buy
+        max_buy_num = int(ai_money[j]/min_sell_price)
+        if max_buy_num >= 1 and ai_pred[j] > min_sell_price:
+            ai_buy_num = min(np.random.randint(max_buy_num + 1, size=1)[0], ai_sell_num[i])
+            money_pay = ai_buy_num * min_sell_price
+            ai_stock[j] = ai_stock[j] + ai_buy_num
+            ai_money[j] = ai_money[j] - money_pay
+            ai_stock[i] = ai_stock[i] - ai_buy_num
+            ai_money[i] = ai_money[i] + money_pay
+            ai_sell_num[i] = ai_sell_num[i] - ai_buy_num
+            price = min_sell_price
+        if ai_sell_num[i] == 0:
+            ai_sell_price[i] = large
+        #print(min_sell_price)
+        min_sell_price = min(ai_sell_price)
+        if min_sell_price > max(ai_pred):
+            break
+        i = np.argmin(ai_sell_price)
+
+    ai_wealth = ai_stock * price + ai_money
+
+    for l in range(num_ai):
+        # ai pred renew
+        r = np.random.uniform(0, 1, size=1)[0]
+        if (r < forget_ratio):
+            # forget about previous guess
+            ai_pred[l] = chi2.rvs(price_df, size=1)[0] / price_df * price
+        else:
+            # change according to previous guess
+            guess = ((ai_pred[l] - price_last) * (price - price_last) >= 0)
+            if not guess:
+                ai_pred[l] = ai_pred[l] + (price - price_last) * np.random.normal(1, 1, 1)[0]
+        # ai control
+        if (ai_rich[l] == 1) and (ai_stock[l] == 0):
+            # ai renew if rich ai sell all stock
+            ai_pred[l] = chi2.rvs(price_df, size=1)[0] / price_df * price
+            ai_money[l] = chi2.rvs(price_df, size=1)[0] / price_df * 20
+            exchange = exchange + 1
+            ai_rich[l] = 0
+        elif (ai_money[l] < price and ai_stock[l] == 0):
+            # ai renew if poor ai do not have enough wealth
+            ai_pred[l] = chi2.rvs(price_df, size=1)[0] / price_df * price
+            ai_money[l] = chi2.rvs(price_df, size=1)[0] / price_df * 20
+            exchange = exchange + 1
+        elif (ai_wealth[l] > 0.1 * sum(ai_wealth)):
+            # ai marked rich if owns 10% of total wealth
+            ai_pred[l] = 0
+            ai_rich[l] = 1
+
+
+    # total capital control
+    mean_pred = np.mean(ai_pred)
+    if (mean_pred > price):
+        ai_money = ai_money + chi2.rvs(0.1, size=1)[0]
+    else:
+        ai_money = ai_money - chi2.rvs(0.1, size=1)[0]
+        # add banker superiority
+        #ai_pred_all = np.mean(ai_pred)
+        #ai_wealth_ratio = ai_wealth / sum(ai_wealth) # random?
+        #ai_pred = ai_wealth_ratio * ai_pred_all + (1 - ai_wealth_ratio) * ai_pred
+
+    t = t + 1
+
+print(str(exchange))
